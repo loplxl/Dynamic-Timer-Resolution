@@ -5,10 +5,10 @@ edition = "2024"
 
 [dependencies]
 active-win-pos-rs = "0.9.1"
-anyhow = "1.0.101"
+shortcuts-rs = { git = "https://gitee.com/SuperWindcloud/shortcuts-rs.git" }
+dirs = "6.0.0"
 ntapi = "0.4.2"
 rfd = "0.17.2"
-winapi = { version = "0.3.9", features = ["winuser", "wincon", "shellapi"] }
-
+winapi = { version = "0.3.9", features = ["ntdef", "wincon", "winuser"] }
 [build-dependencies]
 winres = "0.1"

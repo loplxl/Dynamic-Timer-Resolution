@@ -12,33 +12,39 @@ use std::{
         id
     }
 };
-use winapi::{
-    shared::ntdef::{ULONG},
-    um
-};
+use std::path::{Path, PathBuf};
+use winapi;
 use ntapi::ntexapi::NtSetTimerResolution;
+use dirs;
+use shortcuts_rs::ShellLink;
+
+fn get_startup_dir() -> Result<PathBuf,&'static str> {
+    if let Some(startup_dir) = dirs::config_dir() {
+        let startup_dir = startup_dir.join("Microsoft\\Windows\\Start Menu\\Programs\\Startup");
+        return Ok(startup_dir);
+    }
+    return Err("startup dir not found");
+}
 #[cfg(target_os = "windows")]
 fn hide_console() {
     const SW_HIDE: i32 = 0;
 
     unsafe {
-        let hwnd = um::wincon::GetConsoleWindow();
+        let hwnd = winapi::um::wincon::GetConsoleWindow();
         if !hwnd.is_null() {
-            um::winuser::ShowWindow(hwnd, SW_HIDE);
+            winapi::um::winuser::ShowWindow(hwnd, SW_HIDE);
         }
     }
 }
-
-
 fn set_timer_resolution(resolution: u16, hold: bool) {
-    let desired_time: ULONG = resolution as ULONG;
+    let desired_time: winapi::shared::ntdef::ULONG = resolution as winapi::shared::ntdef::ULONG;
     
-    let mut current_resolution: ULONG = 0; //random pointer to not get error
+    let mut current_resolution: winapi::shared::ntdef::ULONG = 0; //random pointer to not get error
     unsafe {
         let exitcode = NtSetTimerResolution(
             desired_time,
             hold as u8,
-            &mut current_resolution as *mut ULONG
+            &mut current_resolution as *mut winapi::shared::ntdef::ULONG
         );
         if exitcode == 0 {
             if desired_time  != 0 {
@@ -52,6 +58,11 @@ fn set_timer_resolution(resolution: u16, hold: bool) {
     }
 }
 
+fn clear_console() {
+    let _ = std::process::Command::new("cmd")
+        .args(&["/C", "cls"])
+        .status();
+}
 fn sleep(ms: u64) {
     thread::sleep(Duration::from_millis(ms));
 }
@@ -61,16 +72,107 @@ fn pause() {
         .read_line(&mut String::new())
         .unwrap();
 }
-fn addnew(csv_dir: &String) {
+
+fn show_settings(settings_data: &mut str, settings_path: &str) {
+    let mut settings_data = settings_data.to_string();
+    loop {
+        let mut choice: String = String::new();
+        let mut settings_map = HashMap::new();
+        for line in settings_data.lines() {
+            if let Some((key, value)) = line.split_once(",") {
+                settings_map.insert(key.trim(), value.trim());
+            }
+        }
+        while !["1","3"].contains(&choice.trim()) {
+            println!("└─┼───────────────┤ Settings");
+            println!("1 │ Auto Startup  │ {}", settings_map.get("auto_startup").unwrap_or(&"false"));
+            //println!("2 │ Scan Interval │ {}", settings_map.get("scan_interval").unwrap_or(&"1000"));
+            println!("3 │ Save Settings │");
+            choice.clear();
+            print!(">> ");
+            io::stdout().flush().unwrap(); //keep input on same line as prompt
+            io::stdin()
+                .read_line(&mut choice)
+                .unwrap();
+            clear_console();
+        }
+        choice = choice.trim().to_string();
+        match choice.as_str() {
+            "1" => {
+                let mut create_shortcut: bool = false;
+                if settings_data.contains("auto_startup,true") {
+                    settings_data = settings_data.replace("auto_startup,true", "auto_startup,false");
+                } else {
+                    settings_data = settings_data.replace("auto_startup,false", "auto_startup,true");
+                    create_shortcut = true;
+                }
+                let target: PathBuf = env::current_exe().expect("Failed to get current executable path for startup shortcut");
+                let lnk: PathBuf = get_startup_dir().unwrap().join(format!("{}.lnk", target.file_name().unwrap().to_str().unwrap()));
+                if create_shortcut {
+                    let sl = ShellLink::new(target ,None ,None ,None ).unwrap();
+                    sl.create_lnk(lnk).unwrap();
+                } else { fs::remove_file(&lnk).expect("Failed to delete shortcut, maybe you forgot to save settings last time."); }
+            }
+            //"2" => {}
+            "3" => {
+                fs::write(&settings_path, &settings_data).unwrap();
+                break;
+            }
+            _ => {}
+        }
+        clear_console();
+    }
+}
+
+fn add_new(csv_str_dir: &String) {
+    let csv_path = Path::new(&csv_str_dir);
+    if let Some(parent) = csv_path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    // create file if it doesnt exist
+    fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(csv_path)
+        .unwrap();
+    clear_console();
     if let Some(path) = FileDialog::new()
         .set_title("Select a file")
         .pick_file()
     {
-        let mut resolution = String::new();
+        let str_path: &str = path.to_str().unwrap();
+        let exe_name: &str = str_path.split('\\').last().unwrap();
+        println!("Selected: {}", path.display());
+        let csv_contents: String = fs::read_to_string(csv_str_dir).unwrap_or_default();
+        let mut data_to_write: Vec<String> = Vec::new();
+        //overwrite logic
+        if csv_contents.contains(str_path) {
+            loop {
+                println!("A timer resolution for {} already exists. Overwrite? (y/n)", exe_name);
+                let mut choice: String = String::new();
+                io::stdin()
+                    .read_line(&mut choice)
+                    .unwrap();
+                choice = choice.trim().to_lowercase();
+                if choice == "y" || choice == "yes" {
+                    let mut lines: Vec<&str> = csv_contents.lines().collect::<Vec<&str>>();
+                    for line in lines.iter_mut() {
+                        if !(line.contains(str_path)) {
+                            data_to_write.push(line.to_string());
+                        }
+                    }
+                    clear_console();
+                    break;
+                } else if choice == "n" || choice == "no" {
+                    return;
+                }
+            }
+        } else {
+            data_to_write.push(csv_contents);
+        }
         loop {
-            print!("\x1B[2J\x1B[1;1H"); //clear console
-            println!("What resolution for {}?",path.display());
-            resolution.clear();
+            let mut resolution = String::new();
+            println!("What resolution?");
             print!(">> ");
             io::stdout().flush().unwrap(); //keep input on same line as prompt
             io::stdin()
@@ -86,19 +188,17 @@ fn addnew(csv_dir: &String) {
             };
             if !(5000..15625).contains(&parsed_resolution) {
                 println!("Bound error: Please use an integer from 5000-15625");
-                return;
+            } else {
+                data_to_write.push(format!("{},{}", str_path, parsed_resolution));
+                fs::write(csv_path,data_to_write.join("\n")).unwrap();
+                break;
             }
-            let mut file = fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(csv_dir).expect("Failed to create CSV.");
-            writeln!(file,"{},{}\n",path.display(),resolution).expect("Failed to write to data.csv");
-            return;
         }
     }
 }
 
 fn main() {
+
     let pid: String = id().to_string();
     let tasklist =  Command::new("tasklist")
         .arg("/FI")
@@ -121,31 +221,52 @@ fn main() {
     let trh_dir: String = format!("{}\\dynamic-timer-resolution",env::var("LOCALAPPDATA").unwrap());
     fs::create_dir_all(&trh_dir).expect("Failed to create TRH dir");
     let csv_dir: String = format!("{}\\data.csv",trh_dir);
+
+
+    let settings_path: String = format!("{}\\settings.csv", trh_dir);
+    let mut settings_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&settings_path)
+        .unwrap();
+    let mut settings_data: String = fs::read_to_string(&settings_path).unwrap_or_default();
+    if settings_data == "" {
+        settings_data = "auto_startup,false\n\
+            scan_interval,1000".to_owned();
+        settings_file.write(&settings_data.as_bytes()).unwrap();
+    }
+
     let mut choice: String = String::new();
-    while !["1","2","9"].contains(&choice.trim()) {
+    while !["1","2","3","9"].contains(&choice.trim()) {
         println!("Welcome to loplxl's Dynamic Timer Resolution tool!");
         println!("1 > Continue to program");
-        println!("2 > Add new program");
-        println!("9 > Continue to program with no console (requires to be ended with task manager)");
+        println!("2 > Continue to program with no console (requires to be ended with task manager)");
+        println!("3 > Add new program");
+        println!("9 > Change settings");
         choice.clear();
         print!(">> ");
         io::stdout().flush().unwrap(); //keep input on same line as prompt
         io::stdin()
             .read_line(&mut choice)
             .unwrap();
-        print!("\x1B[2J\x1B[1;1H"); //clear console
+        clear_console();
     }
     choice = choice.trim().to_string();
     match choice.as_str() {
         "2" => {
-            addnew(&csv_dir);
+            hide_console();
+        },
+        "3" => {
+            add_new(&csv_dir);
             choice.clear();
             pause();
             main();
             return;
-        },
+        }
         "9" => {
-            hide_console();
+            show_settings(&mut settings_data,&settings_path);
+            main();
+            return;
         }
         _ => {}
     }   
@@ -195,3 +316,4 @@ fn main() {
         } else { sleep(16) }
     }
 }
+
