@@ -57,7 +57,6 @@ fn set_timer_resolution(resolution: u16, hold: bool) {
         // -1073741243 means releasing hold on timer res
     }
 }
-
 fn clear_console() {
     let _ = std::process::Command::new("cmd")
         .args(&["/C", "cls"])
@@ -72,7 +71,6 @@ fn pause() {
         .read_line(&mut String::new())
         .unwrap();
 }
-
 fn show_settings(settings_data: &mut str, settings_path: &str) {
     let mut settings_data = settings_data.to_string();
     loop {
@@ -123,8 +121,7 @@ fn show_settings(settings_data: &mut str, settings_path: &str) {
         clear_console();
     }
 }
-
-fn add_new(csv_str_dir: &String) {
+fn add_new(csv_str_dir: &str) {
     let csv_path = Path::new(&csv_str_dir);
     if let Some(parent) = csv_path.parent() {
         fs::create_dir_all(parent).unwrap();
@@ -194,6 +191,9 @@ fn add_new(csv_str_dir: &String) {
                 break;
             }
         }
+        Command::new(env::current_exe().expect("Failed to get current executable path"))
+            .spawn()
+            .expect("Failed to restart the program");
     }
 }
 
@@ -237,7 +237,8 @@ fn main() {
     }
 
     let mut choice: String = String::new();
-    while !["1","2","3","9"].contains(&choice.trim()) {
+    while !["1","2","3","9","0"].contains(&choice.trim()) {
+        clear_console();
         println!("Welcome to loplxl's Dynamic Timer Resolution tool!");
         println!("1 > Continue to program");
         println!("2 > Continue to program with no console (requires to be ended with task manager)");
@@ -258,16 +259,12 @@ fn main() {
         },
         "3" => {
             add_new(&csv_dir);
-            choice.clear();
-            pause();
-            main();
-            return;
         }
         "9" => {
             show_settings(&mut settings_data,&settings_path);
             main();
-            return;
         }
+        "0" => {return;}
         _ => {}
     }   
     
